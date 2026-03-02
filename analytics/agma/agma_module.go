@@ -4,13 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
-	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/docker/go-units"
 	"github.com/prebid/go-gdpr/vendorconsent"
 	"github.com/prebid/prebid-server/v3/analytics"
@@ -28,19 +24,18 @@ const (
 
 type AgmaLogger struct {
 	sender            httpSender
-	clock             clock.Clock
+	ticker            *time.Ticker
 	accounts          []config.AgmaAnalyticsAccount
 	eventCount        int64
 	maxEventCount     int64
 	maxBufferByteSize int64
 	maxDuration       time.Duration
 	mux               sync.RWMutex
-	sigTermCh         chan os.Signal
 	buffer            bytes.Buffer
 	bufferCh          chan []byte
 }
 
-func newAgmaLogger(cfg config.AgmaAnalytics, sender httpSender, clock clock.Clock) (*AgmaLogger, error) {
+func newAgmaLogger(cfg config.AgmaAnalytics, sender httpSender) (*AgmaLogger, error) {
 	pSize, err := units.FromHumanSize(cfg.Buffers.BufferSize)
 	if err != nil {
 		return nil, err
@@ -58,7 +53,6 @@ func newAgmaLogger(cfg config.AgmaAnalytics, sender httpSender, clock clock.Cloc
 
 	return &AgmaLogger{
 		sender:            sender,
-		clock:             clock,
 		accounts:          cfg.Accounts,
 		maxBufferByteSize: pSize,
 		eventCount:        0,
@@ -66,22 +60,19 @@ func newAgmaLogger(cfg config.AgmaAnalytics, sender httpSender, clock clock.Cloc
 		maxDuration:       pDuration,
 		buffer:            buffer,
 		bufferCh:          make(chan []byte),
-		sigTermCh:         make(chan os.Signal, 1),
 	}, nil
 }
 
-func NewModule(httpClient *http.Client, cfg config.AgmaAnalytics, clock clock.Clock) (analytics.Module, error) {
+func NewModule(httpClient *http.Client, cfg config.AgmaAnalytics) (analytics.Module, error) {
 	sender, err := createHttpSender(httpClient, cfg.Endpoint)
 	if err != nil {
 		return nil, err
 	}
 
-	m, err := newAgmaLogger(cfg, sender, clock)
+	m, err := newAgmaLogger(cfg, sender)
 	if err != nil {
 		return nil, err
 	}
-
-	signal.Notify(m.sigTermCh, os.Interrupt, syscall.SIGTERM)
 
 	go m.start()
 
@@ -89,19 +80,15 @@ func NewModule(httpClient *http.Client, cfg config.AgmaAnalytics, clock clock.Cl
 }
 
 func (l *AgmaLogger) start() {
-	ticker := l.clock.Ticker(l.maxDuration)
+	l.ticker = time.NewTicker(l.maxDuration)
 	for {
 		select {
-		case <-l.sigTermCh:
-			logger.Infof("[AgmaAnalytics] Received Close, trying to flush buffer")
-			l.flush()
-			return
 		case event := <-l.bufferCh:
 			l.bufferEvent(event)
 			if l.isFull() {
 				l.flush()
 			}
-		case <-ticker.C:
+		case <-l.ticker.C:
 			l.flush()
 		}
 	}

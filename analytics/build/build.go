@@ -3,7 +3,6 @@ package build
 import (
 	"encoding/json"
 
-	"github.com/benbjohnson/clock"
 	"github.com/prebid/prebid-server/v3/analytics"
 	"github.com/prebid/prebid-server/v3/analytics/agma"
 	"github.com/prebid/prebid-server/v3/analytics/clients"
@@ -35,8 +34,7 @@ func New(analytics *config.Analytics) analytics.Runner {
 			analytics.Pubstack.ConfRefresh,
 			analytics.Pubstack.Buffers.EventCount,
 			analytics.Pubstack.Buffers.BufferSize,
-			analytics.Pubstack.Buffers.Timeout,
-			clock.New())
+			analytics.Pubstack.Buffers.Timeout)
 		if err == nil {
 			modules["pubstack"] = pubstackModule
 		} else {
@@ -47,8 +45,7 @@ func New(analytics *config.Analytics) analytics.Runner {
 	if analytics.Agma.Enabled {
 		agmaModule, err := agma.NewModule(
 			clients.GetDefaultHttpInstance(),
-			analytics.Agma,
-			clock.New())
+			analytics.Agma)
 		if err == nil {
 			modules["agma"] = agmaModule
 		} else {

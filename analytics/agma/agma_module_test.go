@@ -5,11 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/prebid/openrtb/v20/openrtb2"
 	"github.com/prebid/prebid-server/v3/analytics"
 	"github.com/prebid/prebid-server/v3/config"
@@ -157,10 +155,9 @@ func TestConfigParsingError(t *testing.T) {
 			shouldFail: true,
 		},
 	}
-	clockMock := clock.NewMock()
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := NewModule(&http.Client{}, tc.config, clockMock)
+			_, err := NewModule(&http.Client{}, tc.config)
 			if tc.shouldFail {
 				assert.Error(t, err)
 			} else {
@@ -196,8 +193,7 @@ func TestShouldTrackEvent(t *testing.T) {
 	}
 	mockedSender := new(MockedSender)
 	mockedSender.On("Send", mock.Anything).Return(nil)
-	clockMock := clock.NewMock()
-	logger, err := newAgmaLogger(cfg, mockedSender.Send, clockMock)
+	logger, err := newAgmaLogger(cfg, mockedSender.Send)
 	assert.NoError(t, err)
 
 	// no userExt
@@ -344,8 +340,7 @@ func TestShouldTrackMultipleAccounts(t *testing.T) {
 	}
 	mockedSender := new(MockedSender)
 	mockedSender.On("Send", mock.Anything).Return(nil)
-	clockMock := clock.NewMock()
-	logger, err := newAgmaLogger(cfg, mockedSender.Send, clockMock)
+	logger, err := newAgmaLogger(cfg, mockedSender.Send)
 	assert.NoError(t, err)
 
 	shouldTrack, code := logger.shouldTrackEvent(&openrtb_ext.RequestWrapper{
@@ -438,8 +433,7 @@ func TestShouldNotTrackLog(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			mockedSender := new(MockedSender)
 			mockedSender.On("Send", mock.Anything).Return(nil)
-			clockMock := clock.NewMock()
-			logger, err := newAgmaLogger(tc.config, mockedSender.Send, clockMock)
+			logger, err := newAgmaLogger(tc.config, mockedSender.Send)
 			assert.NoError(t, err)
 
 			go logger.start()
@@ -449,7 +443,7 @@ func TestShouldNotTrackLog(t *testing.T) {
 			logger.LogVideoObject(&mockValidVideoObject)
 			logger.LogAmpObject(&mockValidAmpObject)
 
-			clockMock.Add(2 * time.Minute)
+			time.Sleep(500 * time.Millisecond)
 			mockedSender.AssertNumberOfCalls(t, "Send", 0)
 			assert.Zero(t, logger.eventCount)
 		})
@@ -472,8 +466,7 @@ func TestRaceAllEvents(t *testing.T) {
 	}
 	mockedSender := new(MockedSender)
 	mockedSender.On("Send", mock.Anything).Return(nil)
-	clockMock := clock.NewMock()
-	logger, err := newAgmaLogger(cfg, mockedSender.Send, clockMock)
+	logger, err := newAgmaLogger(cfg, mockedSender.Send)
 	assert.NoError(t, err)
 
 	go logger.start()
@@ -481,14 +474,14 @@ func TestRaceAllEvents(t *testing.T) {
 	logger.LogAuctionObject(&mockValidAuctionObject)
 	logger.LogVideoObject(&mockValidVideoObject)
 	logger.LogAmpObject(&mockValidAmpObject)
-	clockMock.Add(10 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	logger.mux.RLock()
 	assert.Equal(t, int64(3), logger.eventCount)
 	logger.mux.RUnlock()
 }
 
-func TestFlushOnSigterm(t *testing.T) {
+func TestShutdown(t *testing.T) {
 	cfg := config.AgmaAnalytics{
 		Enabled: true,
 		Endpoint: config.AgmaAnalyticsHttpEndpoint{
@@ -504,23 +497,17 @@ func TestFlushOnSigterm(t *testing.T) {
 	}
 	mockedSender := new(MockedSender)
 	mockedSender.On("Send", mock.Anything).Return(nil)
-	clockMock := clock.NewMock()
-	logger, err := newAgmaLogger(cfg, mockedSender.Send, clockMock)
+	logger, err := newAgmaLogger(cfg, mockedSender.Send)
 	assert.NoError(t, err)
 
-	done := make(chan struct{})
-	go func() {
-		logger.start()
-		close(done)
-	}()
+	go logger.start()
 
 	logger.LogAuctionObject(&mockValidAuctionObject)
 	logger.LogVideoObject(&mockValidVideoObject)
 	logger.LogAmpObject(&mockValidAmpObject)
+	time.Sleep(500 * time.Millisecond)
 
-	logger.sigTermCh <- syscall.SIGTERM
-	<-done
-
+	logger.Shutdown()
 	time.Sleep(100 * time.Millisecond)
 
 	mockedSender.AssertCalled(t, "Send", mock.Anything)
@@ -547,8 +534,7 @@ func TestRaceBufferCount(t *testing.T) {
 	}
 	mockedSender := new(MockedSender)
 	mockedSender.On("Send", mock.Anything).Return(nil)
-	clockMock := clock.NewMock()
-	logger, err := newAgmaLogger(cfg, mockedSender.Send, clockMock)
+	logger, err := newAgmaLogger(cfg, mockedSender.Send)
 	assert.NoError(t, err)
 
 	go logger.start()
@@ -557,7 +543,7 @@ func TestRaceBufferCount(t *testing.T) {
 	// Test EventCount Buffer
 	logger.LogAuctionObject(&mockValidAuctionObject)
 
-	clockMock.Add(1 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	logger.mux.RLock()
 	assert.Equal(t, int64(1), logger.eventCount)
@@ -567,7 +553,7 @@ func TestRaceBufferCount(t *testing.T) {
 
 	// add 1 more
 	logger.LogAuctionObject(&mockValidAuctionObject)
-	clockMock.Add(1 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// should trigger send and flash the buffer
 	mockedSender.AssertCalled(t, "Send", mock.Anything)
@@ -598,8 +584,7 @@ func TestBufferSize(t *testing.T) {
 	}
 	mockedSender := new(MockedSender)
 	mockedSender.On("Send", mock.Anything).Return(nil)
-	clockMock := clock.NewMock()
-	logger, err := newAgmaLogger(cfg, mockedSender.Send, clockMock)
+	logger, err := newAgmaLogger(cfg, mockedSender.Send)
 	assert.NoError(t, err)
 
 	go logger.start()
@@ -607,7 +592,7 @@ func TestBufferSize(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		logger.LogAuctionObject(&mockValidAuctionObject)
 	}
-	clockMock.Add(10 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	mockedSender.AssertCalled(t, "Send", mock.Anything)
 	mockedSender.AssertNumberOfCalls(t, "Send", 1)
 }
@@ -622,7 +607,7 @@ func TestBufferTime(t *testing.T) {
 		Buffers: config.AgmaAnalyticsBuffer{
 			EventCount: 1000,
 			BufferSize: "100mb",
-			Timeout:    "5m",
+			Timeout:    "500ms",
 		},
 		Accounts: []config.AgmaAnalyticsAccount{
 			{
@@ -633,8 +618,7 @@ func TestBufferTime(t *testing.T) {
 	}
 	mockedSender := new(MockedSender)
 	mockedSender.On("Send", mock.Anything).Return(nil)
-	clockMock := clock.NewMock()
-	logger, err := newAgmaLogger(cfg, mockedSender.Send, clockMock)
+	logger, err := newAgmaLogger(cfg, mockedSender.Send)
 	assert.NoError(t, err)
 
 	go logger.start()
@@ -642,7 +626,7 @@ func TestBufferTime(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		logger.LogAuctionObject(&mockValidAuctionObject)
 	}
-	clockMock.Add(10 * time.Minute)
+	time.Sleep(time.Second)
 	mockedSender.AssertCalled(t, "Send", mock.Anything)
 	mockedSender.AssertNumberOfCalls(t, "Send", 1)
 }
@@ -679,10 +663,7 @@ func TestRaceEnd2End(t *testing.T) {
 		Accounts: mockValidAccounts,
 	}
 
-	clockMock := clock.NewMock()
-	clockMock.Set(time.Date(2023, 2, 1, 0, 0, 0, 0, time.UTC))
-
-	logger, err := NewModule(&http.Client{}, cfg, clockMock)
+	logger, err := NewModule(&http.Client{}, cfg)
 	assert.NoError(t, err)
 
 	logger.LogAmpObject(&mockValidAmpObject)

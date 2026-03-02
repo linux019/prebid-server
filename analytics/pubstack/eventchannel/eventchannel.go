@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/prebid/prebid-server/v3/logger"
 )
 
@@ -31,10 +30,9 @@ type EventChannel struct {
 	muxGzBuffer sync.RWMutex
 	send        Sender
 	limit       Limit
-	clock       clock.Clock
 }
 
-func NewEventChannel(sender Sender, clock clock.Clock, maxByteSize, maxEventCount int64, maxTime time.Duration) *EventChannel {
+func NewEventChannel(sender Sender, maxByteSize, maxEventCount int64, maxTime time.Duration) *EventChannel {
 	b := &bytes.Buffer{}
 	gzw := gzip.NewWriter(b)
 
@@ -46,7 +44,6 @@ func NewEventChannel(sender Sender, clock clock.Clock, maxByteSize, maxEventCoun
 		metrics: Metrics{},
 		send:    sender,
 		limit:   Limit{maxByteSize, maxEventCount, maxTime},
-		clock:   clock,
 	}
 	go c.start()
 	return &c
@@ -121,7 +118,7 @@ func (c *EventChannel) flush() {
 }
 
 func (c *EventChannel) start() {
-	ticker := c.clock.Ticker(c.limit.maxTime)
+	ticker := time.NewTicker(c.limit.maxTime)
 
 	for {
 		select {

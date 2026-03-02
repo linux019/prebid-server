@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -47,12 +46,11 @@ func readChanOrTimeout(t *testing.T, c <-chan []byte, msgAndArgs ...interface{})
 
 func TestEventChannelIsBufferFull(t *testing.T) {
 	send := func([]byte) error { return nil }
-	clockMock := clock.NewMock()
 
 	maxBufferSize := int64(15)
 	maxEventCount := int64(3)
 
-	eventChannel := NewEventChannel(send, clockMock, maxBufferSize, maxEventCount, maxTime)
+	eventChannel := NewEventChannel(send, maxBufferSize, maxEventCount, maxTime)
 	defer eventChannel.Close()
 
 	eventChannel.buffer([]byte("one"))
@@ -75,9 +73,8 @@ func TestEventChannelIsBufferFull(t *testing.T) {
 
 func TestEventChannelReset(t *testing.T) {
 	send := func([]byte) error { return nil }
-	clockMock := clock.NewMock()
 
-	eventChannel := NewEventChannel(send, clockMock, largeBufferSize, largeEventCount, maxTime)
+	eventChannel := NewEventChannel(send, largeBufferSize, largeEventCount, maxTime)
 	defer eventChannel.Close()
 
 	assert.Zero(t, eventChannel.metrics.eventCount)
@@ -98,9 +95,8 @@ func TestEventChannelReset(t *testing.T) {
 func TestEventChannelFlush(t *testing.T) {
 	dataSent := make(chan []byte)
 	send := newSender(dataSent)
-	clockMock := clock.NewMock()
 
-	eventChannel := NewEventChannel(send, clockMock, largeBufferSize, largeEventCount, maxTime)
+	eventChannel := NewEventChannel(send, largeBufferSize, largeEventCount, maxTime)
 	defer eventChannel.Close()
 
 	eventChannel.buffer([]byte("one"))
@@ -115,9 +111,8 @@ func TestEventChannelFlush(t *testing.T) {
 func TestEventChannelClose(t *testing.T) {
 	dataSent := make(chan []byte)
 	send := newSender(dataSent)
-	clockMock := clock.NewMock()
 
-	eventChannel := NewEventChannel(send, clockMock, largeBufferSize, largeEventCount, maxTime)
+	eventChannel := NewEventChannel(send, largeBufferSize, largeEventCount, maxTime)
 
 	eventChannel.buffer([]byte("one"))
 	eventChannel.buffer([]byte("two"))
@@ -131,16 +126,15 @@ func TestEventChannelClose(t *testing.T) {
 func TestEventChannelPush(t *testing.T) {
 	dataSent := make(chan []byte)
 	send := newSender(dataSent)
-	clockMock := clock.NewMock()
 
-	eventChannel := NewEventChannel(send, clockMock, largeBufferSize, largeEventCount, 1*time.Second)
+	eventChannel := NewEventChannel(send, largeBufferSize, largeEventCount, 50*time.Millisecond)
 	defer eventChannel.Close()
 
 	eventChannel.Push([]byte("1"))
 	eventChannel.Push([]byte("2"))
 	eventChannel.Push([]byte("3"))
 
-	clockMock.Add(1 * time.Second) // trigger event timer
+	time.Sleep(500 * time.Millisecond)
 
 	data, _ := readChanOrTimeout(t, dataSent)
 	assert.ElementsMatch(t, []byte{'1', '2', '3'}, []byte(readGz(data)))

@@ -3,13 +3,9 @@ package pubstack
 import (
 	"fmt"
 	"net/http"
-	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/prebid/prebid-server/v3/analytics"
 	"github.com/prebid/prebid-server/v3/analytics/pubstack/eventchannel"
 	"github.com/prebid/prebid-server/v3/analytics/pubstack/helpers"
@@ -40,16 +36,14 @@ type bufferConfig struct {
 type PubstackModule struct {
 	eventChannels map[string]*eventchannel.EventChannel
 	httpClient    *http.Client
-	sigTermCh     chan os.Signal
 	stopCh        chan struct{}
 	scope         string
 	cfg           *Configuration
 	buffsCfg      *bufferConfig
 	muxConfig     sync.RWMutex
-	clock         clock.Clock
 }
 
-func NewModule(client *http.Client, scope, endpoint, configRefreshDelay string, maxEventCount int, maxByteSize, maxTime string, clock clock.Clock) (analytics.Module, error) {
+func NewModule(client *http.Client, scope, endpoint, configRefreshDelay string, maxEventCount int, maxByteSize, maxTime string) (analytics.Module, error) {
 	configUpdateTask, err := NewConfigUpdateHttpTask(
 		client,
 		scope,
@@ -59,10 +53,10 @@ func NewModule(client *http.Client, scope, endpoint, configRefreshDelay string, 
 		return nil, err
 	}
 
-	return NewModuleWithConfigTask(client, scope, endpoint, maxEventCount, maxByteSize, maxTime, configUpdateTask, clock)
+	return NewModuleWithConfigTask(client, scope, endpoint, maxEventCount, maxByteSize, maxTime, configUpdateTask)
 }
 
-func NewModuleWithConfigTask(client *http.Client, scope, endpoint string, maxEventCount int, maxByteSize, maxTime string, configTask ConfigUpdateTask, clock clock.Clock) (analytics.Module, error) {
+func NewModuleWithConfigTask(client *http.Client, scope, endpoint string, maxEventCount int, maxByteSize, maxTime string, configTask ConfigUpdateTask) (analytics.Module, error) {
 	logger.Infof("[pubstack] Initializing module scope=%s endpoint=%s\n", scope, endpoint)
 
 	// parse args
@@ -90,14 +84,10 @@ func NewModuleWithConfigTask(client *http.Client, scope, endpoint string, maxEve
 		httpClient:    client,
 		cfg:           defaultConfig,
 		buffsCfg:      bufferCfg,
-		sigTermCh:     make(chan os.Signal),
 		stopCh:        make(chan struct{}),
 		eventChannels: make(map[string]*eventchannel.EventChannel),
 		muxConfig:     sync.RWMutex{},
-		clock:         clock,
 	}
-
-	signal.Notify(pb.sigTermCh, os.Interrupt, syscall.SIGTERM)
 
 	configChannel := configTask.Start(pb.stopCh)
 	go pb.start(configChannel)
@@ -202,14 +192,14 @@ func (p *PubstackModule) LogAmpObject(ao *analytics.AmpObject) {
 // Shutdown - no op since the analytic module already implements system signal handling
 // and trying to close a closed channel will cause panic
 func (p *PubstackModule) Shutdown() {
+	close(p.stopCh)
 	logger.Infof("[PubstackModule] Shutdown")
 }
 
 func (p *PubstackModule) start(c <-chan *Configuration) {
 	for {
 		select {
-		case <-p.sigTermCh:
-			close(p.stopCh)
+		case <-p.stopCh:
 			cfg := p.cfg.clone().disableAllFeatures()
 			p.updateConfig(cfg)
 			return
@@ -246,7 +236,7 @@ func (p *PubstackModule) isFeatureEnable(feature string) bool {
 func (p *PubstackModule) registerChannel(feature string) {
 	if p.isFeatureEnable(feature) {
 		sender := eventchannel.BuildEndpointSender(p.httpClient, p.cfg.Endpoint, feature)
-		p.eventChannels[feature] = eventchannel.NewEventChannel(sender, p.clock, p.buffsCfg.size, p.buffsCfg.count, p.buffsCfg.timeout)
+		p.eventChannels[feature] = eventchannel.NewEventChannel(sender, p.buffsCfg.size, p.buffsCfg.count, p.buffsCfg.timeout)
 	}
 }
 

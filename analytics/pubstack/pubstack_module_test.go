@@ -3,11 +3,9 @@ package pubstack
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/benbjohnson/clock"
 	"github.com/prebid/prebid-server/v3/analytics"
 	"github.com/prebid/prebid-server/v3/openrtb_ext"
 	"github.com/stretchr/testify/assert"
@@ -41,7 +39,7 @@ func TestNewModuleErrors(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		_, err := NewModule(&http.Client{}, "scope", "http://example.com", tt.refreshDelay, 100, tt.maxByteSize, tt.maxTime, clock.NewMock())
+		_, err := NewModule(&http.Client{}, "scope", "http://example.com", tt.refreshDelay, 100, tt.maxByteSize, tt.maxTime)
 		assert.Error(t, err, tt.description)
 	}
 }
@@ -138,9 +136,8 @@ func TestNewModuleSuccess(t *testing.T) {
 		updatedConfig.Endpoint = server.URL
 
 		// instantiate module with a manual config update task
-		clockMock := clock.NewMock()
 		configTask := fakeConfigUpdateTask{}
-		module, err := NewModuleWithConfigTask(client, "scope", server.URL, 100, "1B", "1s", &configTask, clockMock)
+		module, err := NewModuleWithConfigTask(client, "scope", server.URL, 100, "1B", "1s", &configTask)
 		assert.NoError(t, err, tt.description)
 
 		pubstack, _ := module.(*PubstackModule)
@@ -149,28 +146,26 @@ func TestNewModuleSuccess(t *testing.T) {
 		configTask.Push(origConfig)
 		time.Sleep(10 * time.Millisecond)                            // allow time for the module to load the original config
 		tt.logObject(pubstack)                                       // attempt to log; no event channel created because feature is disabled in original config
-		clockMock.Add(1 * time.Second)                               // trigger event channel sending
+		time.Sleep(500 * time.Millisecond)                           // allow time for the ticker to fire
 		assertChanNone(t, intakeChannel, tt.description+":original") // verify no event was received
 
 		// updated config
 		configTask.Push(updatedConfig)
 		time.Sleep(10 * time.Millisecond)                          // allow time for the server to start serving the updated config
 		tt.logObject(pubstack)                                     // attempt to log; event channel should be created because feature is enabled in updated config
-		clockMock.Add(1 * time.Second)                             // trigger event channel sending
 		assertChanOne(t, intakeChannel, tt.description+":updated") // verify an event was received
 
 		// no config change
 		configTask.Push(updatedConfig)
 		time.Sleep(10 * time.Millisecond)                            // allow time for the server to determine no config change
 		tt.logObject(pubstack)                                       // attempt to log; event channel should still be created from loading updated config
-		clockMock.Add(1 * time.Second)                               // trigger event channel sending
 		assertChanOne(t, intakeChannel, tt.description+":no_change") // verify an event was received
 
 		// shutdown
-		pubstack.sigTermCh <- os.Kill                                // simulate os shutdown signal
+		pubstack.Shutdown()                                          // trigger shutdown
 		time.Sleep(10 * time.Millisecond)                            // allow time for the server to switch to shutdown generated config
-		tt.logObject(pubstack)                                       // attempt to log; event channel should be closed from the os kill signal
-		clockMock.Add(1 * time.Second)                               // trigger event channel sending
+		tt.logObject(pubstack)                                       // attempt to log; event channel should be closed from shutdown
+		time.Sleep(500 * time.Millisecond)                           // allow time for the ticker to fire
 		assertChanNone(t, intakeChannel, tt.description+":shutdown") // verify no event was received
 	}
 }
